@@ -1,0 +1,74 @@
+pool:
+ name: Hosted VS2017
+ demands:
+  - msbuild
+  - visualstudio
+  - vstest
+
+variables:
+  solution: '**/*.sln'
+  buildPlatform: 'Any CPU'
+  buildConfiguration: 'Release'
+
+steps:
+
+- task: SonarQubePrepare@4
+  inputs:
+    SonarQube: 'InternalSonarQube'
+    scannerMode: 'MSBuild'
+    projectKey: 'API-Temp'
+    projectName: 'API Template'
+    extraProperties: 'sonar.cs.vscoveragexml.reportsPaths=**/*.coveragexml'
+
+- script: dotnet restore
+
+- task: DotNetCoreCLI@2
+  displayName: Build
+  inputs:
+    command: build
+    projects: '$(solution)'
+    arguments: '--configuration $(buildConfiguration)' # Update this to match your need
+
+- task: VSTest@2
+  displayName: 'Run All Automated Unit Tests'
+  inputs:
+    runSettingsFile: 'Config.runsettings'
+    codeCoverageEnabled: true
+    testRunTitle: 'ProjectName - Automated Unit Tests'
+    platform: '$(BuildPlatform)'
+    configuration: '$(BuildConfiguration)'
+    diagnosticsEnabled: True
+  continueOnError: false 
+
+- task: PowerShell@2
+  displayName: Covert coverage file
+  inputs:
+    targetType: 'inline'
+    script: |
+      Get-ChildItem -Recurse -Filter "*.coverage" | % {
+      $outfile = "$([System.IO.Path]::GetFileNameWithoutExtension($_.FullName)).coveragexml"
+      $output = [System.IO.Path]::Combine([System.IO.Path]::GetDirectoryName($_.FullName), $outfile)
+      "Analyse '$($_.Name)' with output '$outfile'..."
+      . "C:\Program Files (x86)\Microsoft Visual Studio\2017\Enterprise\Team Tools\Dynamic Code Coverage Tools\CodeCoverage.exe" analyze /output:$output $_.FullName
+      }
+      "Done"
+
+- task: SonarQubeAnalyze@4
+  displayName: Sonar qube Analysis
+
+- task: SonarQubePublish@4
+  displayName: Sonar qube publish results
+  inputs:
+    pollingTimeoutSec: '300'
+
+
+- task: DotNetCoreCLI@2
+  displayName: 'dotnet publish $(buildConfiguration)'
+  inputs:
+    command: publish
+    publishWebProjects: false
+    arguments: '--configuration $(BuildConfiguration) --output $(Build.ArtifactStagingDirectory)'
+    zipAfterPublish: True   
+
+- task: PublishBuildArtifacts@1
+  displayName: Publishing artifacts
